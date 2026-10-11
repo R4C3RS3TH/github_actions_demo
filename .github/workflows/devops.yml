@@ -121,3 +121,65 @@ jobs:
           echo "Repo: $GITHUB_REPOSITORY"
           echo "Evento: $GITHUB_EVENT_NAME"
           echo "Runner: $RUNNER_OS"
+
+  deploy:
+    needs: [test, package]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Render page
+        env:
+          BUILD_TAG: ${{ needs.test.outputs.build_tag }}
+          COMMIT_URL: ${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          REPO_URL: ${{ github.server_url }}/${{ github.repository }}
+        run: |
+          mkdir -p public
+          export APP_OUTPUT=$(python hello.py)
+          sed \
+            -e "s|__BUILD_TAG__|${BUILD_TAG}|g" \
+            -e "s|__COMMIT_SHORT__|${GITHUB_SHA::7}|g" \
+            -e "s|__COMMIT_URL__|${COMMIT_URL}|g" \
+            -e "s|__BRANCH__|${GITHUB_REF_NAME}|g" \
+            -e "s|__ACTOR__|${GITHUB_ACTOR}|g" \
+            -e "s|__DATE__|$(date -u '+%Y-%m-%d %H:%M:%S')|g" \
+            -e "s|__RUN_URL__|${RUN_URL}|g" \
+            -e "s|__RUN_NUMBER__|${GITHUB_RUN_NUMBER}|g" \
+            -e "s|__REPO_URL__|${REPO_URL}|g" \
+            site/index.html > public/index.html
+          python - <<'PY'
+          import os, pathlib
+          p = pathlib.Path("public/index.html")
+          p.write_text(p.read_text().replace("__APP_OUTPUT__", os.environ["APP_OUTPUT"]))
+          PY
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload site artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
