@@ -37,10 +37,12 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run tests
+      - name: Run tests with coverage gate
         run: |
           export PYTHONPATH="${PYTHONPATH}:$(pwd)"
-          pytest -q
+          pytest -q --junitxml=report.xml \
+            --cov=hello --cov-report=term-missing --cov-report=xml \
+            --cov-fail-under=80
 
       - name: Compute build tag
         id: meta
@@ -57,6 +59,34 @@ jobs:
         with:
           name: build-info
           path: build-info.txt
+
+      - name: Upload test and coverage reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report
+          path: |
+            report.xml
+            coverage.xml
+
+      - name: Publish summary
+        if: always()
+        run: |
+          TESTS=$(grep -o 'tests="[0-9]*"' report.xml 2>/dev/null | head -1)
+          FAILS=$(grep -o 'failures="[0-9]*"' report.xml 2>/dev/null | head -1)
+          COV=$(python -c "import xml.etree.ElementTree as ET; print(str(round(float(ET.parse('coverage.xml').getroot().get('line-rate'))*100))+'%')" 2>/dev/null || echo "n/a")
+          {
+            echo "## 🧪 Resultado del job test"
+            echo ""
+            echo "| Campo | Valor |"
+            echo "|---|---|"
+            echo "| Build tag | \`${{ steps.meta.outputs.tag }}\` |"
+            echo "| Python | $(python --version) |"
+            echo "| Tests | ${TESTS} |"
+            echo "| Fallos | ${FAILS} |"
+            echo "| Cobertura | ${COV} (mínimo 80%) |"
+            echo "| Estado | ${{ job.status }} |"
+          } >> "$GITHUB_STEP_SUMMARY"
 
   package:
     needs: test
